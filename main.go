@@ -11,8 +11,9 @@ import (
 )
 
 type RouterConfig struct {
-	Port int16 `json:"port"`
-	TLS  bool  `json:"tls"`
+	Port            uint16 `json:"port"`
+	TLS             bool   `json:"tls"`
+	TLSRedirectPort uint16 `json:"tlsRedirectPort"`
 }
 
 type FirewallRules map[string]string
@@ -78,21 +79,40 @@ func main() {
 		return
 	}
 
-	var config Config
+	config := Config{
+		Router: RouterConfig{
+			Port:            80,
+			TLS:             false,
+			TLSRedirectPort: 0,
+		},
+		Firewall: FirewallRules{},
+	}
 	if err := json.Unmarshal(bytes, &config); err != nil {
 		log.Fatal(err)
 		return
 	}
 
-	http.HandleFunc("/", config.firewallRulingHandler)
+	if config.Router.TLS && config.Router.TLSRedirectPort > 0 {
+		go func() {
+			secondaryMux := http.NewServeMux()
+			secondaryMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "https://"+r.Host+r.RequestURI, http.StatusMovedPermanently)
+			})
+			fmt.Println("TLS-Redirect-Server is running on port", config.Router.TLSRedirectPort)
+			log.Fatal(http.ListenAndServe(":"+fmt.Sprint(config.Router.TLSRedirectPort), secondaryMux))
+		}()
+	}
 
-	fmt.Println("Server is running on port", config.Router.Port)
+	mainMux := http.NewServeMux()
+	mainMux.HandleFunc("/", config.firewallRulingHandler)
+
+	fmt.Println("Router-Server is running on port", config.Router.Port)
 	if config.Router.TLS {
-		if err := http.ListenAndServeTLS(":"+fmt.Sprint(config.Router.Port), "tls/certificate.pem", "tls/key.pem", nil); err != nil {
+		if err := http.ListenAndServeTLS(":"+fmt.Sprint(config.Router.Port), "tls/certificate.pem", "tls/key.pem", mainMux); err != nil {
 			fmt.Println("Error starting server: ", err)
 		}
 	} else {
-		if err := http.ListenAndServe(":"+fmt.Sprint(config.Router.Port), nil); err != nil {
+		if err := http.ListenAndServe(":"+fmt.Sprint(config.Router.Port), mainMux); err != nil {
 			fmt.Println("Error starting server: ", err)
 		}
 	}
