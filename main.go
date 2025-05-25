@@ -10,10 +10,16 @@ import (
 	"strings"
 )
 
+type TLSConfig struct {
+	Active       bool   `json:"active"`
+	RedirectPort uint16 `json:"redirectPort"`
+	Certificate  string `json:"certificate"`
+	Key          string `json:"key"`
+}
+
 type RouterConfig struct {
-	Port            uint16 `json:"port"`
-	TLS             bool   `json:"tls"`
-	TLSRedirectPort uint16 `json:"tlsRedirectPort"`
+	Port uint16    `json:"port"`
+	TLS  TLSConfig `json:"tls"`
 }
 
 type FirewallRules map[string]string
@@ -81,9 +87,13 @@ func main() {
 
 	config := Config{
 		Router: RouterConfig{
-			Port:            80,
-			TLS:             false,
-			TLSRedirectPort: 0,
+			Port: 80,
+			TLS: TLSConfig{
+				Active:       false,
+				RedirectPort: 0,
+				Certificate:  "tls/certificate.pem",
+				Key:          "tls/key.pem",
+			},
 		},
 		Firewall: FirewallRules{},
 	}
@@ -92,14 +102,14 @@ func main() {
 		return
 	}
 
-	if config.Router.TLS && config.Router.TLSRedirectPort > 0 {
+	if config.Router.TLS.Active && config.Router.TLS.RedirectPort > 0 {
 		go func() {
 			secondaryMux := http.NewServeMux()
 			secondaryMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, "https://"+r.Host+r.RequestURI, http.StatusMovedPermanently)
 			})
-			fmt.Println("TLS-Redirect-Server is running on port", config.Router.TLSRedirectPort)
-			log.Fatal(http.ListenAndServe(":"+fmt.Sprint(config.Router.TLSRedirectPort), secondaryMux))
+			fmt.Println("TLS-Redirect-Server is running on port", config.Router.TLS.RedirectPort)
+			log.Fatal(http.ListenAndServe(":"+fmt.Sprint(config.Router.TLS.RedirectPort), secondaryMux))
 		}()
 	}
 
@@ -107,8 +117,8 @@ func main() {
 	mainMux.HandleFunc("/", config.firewallRulingHandler)
 
 	fmt.Println("Router-Server is running on port", config.Router.Port)
-	if config.Router.TLS {
-		if err := http.ListenAndServeTLS(":"+fmt.Sprint(config.Router.Port), "tls/certificate.pem", "tls/key.pem", mainMux); err != nil {
+	if config.Router.TLS.Active {
+		if err := http.ListenAndServeTLS(":"+fmt.Sprint(config.Router.Port), config.Router.TLS.Certificate, config.Router.TLS.Key, mainMux); err != nil {
 			fmt.Println("Error starting server: ", err)
 		}
 	} else {
